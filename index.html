@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>COD1 | Final Fix</title>
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;700;900&display=swap" rel="stylesheet">
+    <style>
+        :root { --bg: #05070a; --accent: #00f2ff; --panel: rgba(23, 28, 41, 0.95); }
+        * { box-sizing: border-box; font-family: 'Cairo', sans-serif; }
+        body { margin: 0; height: 100vh; background: var(--bg); color: white; overflow: hidden; display: flex; justify-content: center; align-items: center; }
+        #authScreen { position: fixed; inset: 0; z-index: 2000; display: flex; justify-content: center; align-items: center; background: #05070a; }
+        .login-box { width: 320px; padding: 30px; border-radius: 20px; background: var(--panel); border: 1px solid var(--accent); text-align: center; }
+        .input-field { width: 100%; padding: 12px; margin-top: 10px; border-radius: 10px; border: 1px solid #333; background: #000; color: white; text-align: center; }
+        .enter-btn { width: 100%; padding: 12px; margin-top: 20px; border-radius: 10px; border: none; background: var(--accent); color: black; font-weight: bold; cursor: pointer; }
+        #mainApp { display: none; width: 100%; height: 100vh; flex-direction: column; }
+        .top-bar { padding: 10px; background: #161b22; display: flex; justify-content: space-between; align-items: center; font-size: 14px; }
+        #chatBox { flex: 1; padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; background: #0d1117; }
+        .bubble { padding: 10px 15px; border-radius: 15px; max-width: 80%; font-size: 14px; }
+        .me { align-self: flex-end; background: var(--accent); color: black; }
+        .other { align-self: flex-start; background: #21262d; }
+        .controls { padding: 15px; background: #161b22; display: flex; gap: 10px; }
+    </style>
+</head>
+<body>
+
+    <div id="authScreen">
+        <div class="login-box">
+            <h2 style="color:var(--accent)">COD1</h2>
+            <input type="text" id="userName" class="input-field" placeholder="اسمك المستعار">
+            <input type="number" id="roomNum" class="input-field" placeholder="رقم الغرفة (1-500)">
+            <button class="enter-btn" onclick="startApp()">اتصال مباشر</button>
+        </div>
+    </div>
+
+    <div id="mainApp">
+        <nav class="top-bar">
+            <div id="status">جاري التهيئة...</div>
+            <button onclick="location.reload()" style="background:red; color:white; border:none; padding:5px 10px; border-radius:5px;">خروج</button>
+        </nav>
+        <div id="chatBox"></div>
+        <div class="controls">
+            <button onclick="document.getElementById('fileIn').click()">🖼️</button>
+            <input type="file" id="fileIn" hidden onchange="handleFile(this)">
+            <input type="text" id="msgInput" class="input-field" style="margin:0" placeholder="رسالة..." onkeypress="if(event.key==='Enter') sendText()">
+            <button class="enter-btn" style="width:auto; margin:0" onclick="sendText()">إرسال</button>
+        </div>
+    </div>
+
+<script>
+    let peer, conn, myName, roomID;
+    const chatBox = document.getElementById('chatBox');
+
+    function startApp() {
+        myName = document.getElementById('userName').value;
+        roomID = document.getElementById('roomNum').value;
+        if(!myName || !roomID) return alert("أكمل البيانات");
+
+        document.getElementById('authScreen').style.display = 'none';
+        document.getElementById('mainApp').style.display = 'flex';
+
+        const roomKey = "ZAKITOP_ROOM_" + roomID;
+
+        // الاتصال بسيرفر PeerJS العام
+        peer = new Peer(); 
+
+        peer.on('open', (id) => {
+            document.getElementById('status').innerText = "جاري البحث عن الغرفة...";
+            
+            // نحاول الاتصال بالغرفة (باعتبار أن هناك شخص أنشأها قبلك)
+            let checkConn = peer.connect(roomKey);
+            
+            checkConn.on('open', () => {
+                conn = checkConn;
+                setupConn();
+            });
+
+            // إذا لم نجد أحداً (نحن أول من يدخل)، نجعل أنفسنا نحن الغرفة
+            setTimeout(() => {
+                if (!conn) {
+                    peer.destroy(); // نغلق الاتصال العشوائي
+                    peer = new Peer(roomKey); // نفتح الاتصال باسم الغرفة
+                    peer.on('open', () => {
+                        document.getElementById('status').innerText = "أنت منشئ الغرفة رقم " + roomID;
+                    });
+                    peer.on('connection', (c) => {
+                        conn = c;
+                        setupConn();
+                    });
+                }
+            }, 2000);
+        });
+    }
+
+    function setupConn() {
+        document.getElementById('status').innerText = "🔵 متصل الآن!";
+        conn.on('data', (data) => {
+            renderMsg(data.user, data.content, 'other', data.type);
+        });
+    }
+
+    function sendText() {
+        const val = document.getElementById('msgInput').value;
+        if(!val || !conn) return;
+        conn.send({ type: 'text', content: val, user: myName });
+        renderMsg("أنا", val, 'me', 'text');
+        document.getElementById('msgInput').value = "";
+    }
+
+    function handleFile(input) {
+        const file = input.files[0];
+        const reader = new FileReader();
+        reader.onload = () => {
+            const type = file.type.startsWith('image') ? 'img' : 'video';
+            conn.send({ type: type, content: reader.result, user: myName });
+            renderMsg("أنا", reader.result, 'me', type);
+        };
+        reader.readAsDataURL(file);
+    }
+
+    function renderMsg(user, content, side, type) {
+        const div = document.createElement('div');
+        div.className = `bubble ${side}`;
+        if(type === 'text') div.innerText = user + ": " + content;
+        else if(type === 'img') div.innerHTML = user + ":<br><img src='"+content+"' style='max-width:200px; border-radius:10px;'>";
+        chatBox.appendChild(div);
+        chatBox.scrollTop = chatBox.scrollHeight;
+    }
+</script>
+</body>
+</html>
